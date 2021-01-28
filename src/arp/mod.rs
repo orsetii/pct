@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::convert::TryInto;
 
 ///An ARP Packet.
@@ -124,20 +125,6 @@ impl<'a> ArpPacketSlice<'a> {
     }
 }
 
-struct ArpCacheEntry {
-    hwtype: u16,
-
-    source_ip: u32,
-
-    smac: [u8; 6],
-
-    state: u32,
-}
-
-pub struct ArpCacheTable {
-    table: [ArpCacheEntry],
-}
-
 // Packet Reception:
 // -----------------
 //
@@ -209,12 +196,30 @@ pub struct ArpCacheTable {
 //
 //
 //
-//
-//
-//
 
-pub fn read_packet(data: &[u8]) {
+// we
+pub type TranslationTable = HashMap<[u8; 6], u32>;
+
+pub fn read_packet(data: &[u8], table: &mut TranslationTable) {
     let packet = ArpPacket::from_slice(&ArpPacketSlice { slice: &data });
 
     println!("{:02x?}", packet);
+
+    let res = table.get(&packet.ipv4_data.destination_mac);
+
+    match res {
+        Some(x) => {
+            // If we have a corresponding IP already.
+            // TODO implement reply function, and use the IP we grab here.
+            println!("Got IP {:?}", x);
+        }
+
+        None => {
+            println!(
+                "No IP Available for MAC {:X?}",
+                &packet.ipv4_data.destination_mac
+            );
+            // TODO implement broadcast to get IP, then reply.
+        }
+    }
 }

@@ -1,5 +1,7 @@
 use std::convert::TryInto;
 
+///An ARP Packet.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ArpPacket {
     /// hardware_type describes what link layer type is used
     /// In our case this will be ethernet - 0x0001
@@ -48,6 +50,7 @@ impl ArpPacket {
 
 /// For the moment only supporting Ipv4 over Ethernet, meaning the entire packet should be 28
 /// bytes. The first 8 are taken by the header, and the rest by this struct!
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ArpIpv4 {
     /// Source's MAC Address.
     source_mac: [u8; 6],
@@ -71,49 +74,53 @@ pub struct ArpPacketSlice<'a> {
 impl<'a> ArpPacketSlice<'a> {
     /// Using functions to grab this data so we can add to implementations and error/bounds
     /// checking easier.
-    pub fn hardware_type(&self) -> u16 {
+    fn hardware_type(&self) -> u16 {
         u16::from_be_bytes([self.slice[0], self.slice[1]])
     }
 
-    pub fn proto_type(&self) -> u16 {
+    fn proto_type(&self) -> u16 {
         u16::from_be_bytes([self.slice[2], self.slice[3]])
     }
 
-    pub fn hardware_size(&self) -> u8 {
+    fn hardware_size(&self) -> u8 {
         self.slice[4]
     }
 
-    pub fn proto_size(&self) -> u8 {
+    fn proto_size(&self) -> u8 {
         self.slice[5]
     }
 
-    pub fn opcode(&self) -> u16 {
+    fn opcode(&self) -> u16 {
         u16::from_be_bytes([self.slice[6], self.slice[7]])
     }
 
-    pub fn source_mac(&self) -> [u8; 6] {
+    fn source_mac(&self) -> [u8; 6] {
         self.slice[..6]
             .try_into()
             .expect(format!("Error in source MAC {0}:{1}", file!(), line!()).as_str())
     }
 
-    pub fn source_ip(&self) -> u32 {
+    fn source_ip(&self) -> u32 {
         u32::from_be_bytes([self.slice[6], self.slice[7], self.slice[8], self.slice[9]])
     }
 
-    pub fn destination_mac(&self) -> [u8; 6] {
+    fn destination_mac(&self) -> [u8; 6] {
         self.slice[10..16]
             .try_into()
             .expect(format!("Error in destination MAC {0}:{1}", file!(), line!()).as_str())
     }
 
-    pub fn destination_ip(&self) -> u32 {
+    fn destination_ip(&self) -> u32 {
         u32::from_be_bytes([
             self.slice[16],
             self.slice[17],
             self.slice[18],
             self.slice[19],
         ])
+    }
+
+    fn read_from_slice(data: &'a [u8; 28]) -> Self {
+        ArpPacketSlice { slice: data }
     }
 }
 
@@ -184,11 +191,30 @@ pub struct ArpCacheTable {
 //
 //
 //
-// TODO
+// TODO for ARP module
 //
 // Store IPv4->MAC translations from broadcasts in our translation table.
 //
 // When receiving a request, check the table. If found, reply; if not found
 // send broadcast, update table with response, and then reply with that translation.
+//
+//
+//
+// TODO for reading packet
+//
+// Enum of hardware types
+// Enum of protocol types
+// check that protocol/hardware size are valid
+// Enum of opcodes
+//
+//
+//
+//
+//
+//
 
-pub fn read_incoming() {}
+pub fn read_packet(data: &[u8]) {
+    let packet = ArpPacket::from_slice(&ArpPacketSlice { slice: &data });
+
+    println!("{:02x?}", packet);
+}

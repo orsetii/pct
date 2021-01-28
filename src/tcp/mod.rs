@@ -60,7 +60,7 @@ impl EthernetHeader {
 ///A slice containing an ethernet 2 header of a network package.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EthernetFrameSlice<'a> {
-    slice: &'a [u8],
+    pub slice: &'a [u8],
 }
 
 impl<'a> EthernetFrameSlice<'a> {
@@ -82,7 +82,13 @@ impl<'a> EthernetFrameSlice<'a> {
         u16::from_be_bytes([self.slice[12], self.slice[13]])
     }
 
-    pub fn read_from_slice(data: &'a [u8; 14]) -> Self {
+    pub fn read_from_slice(data: &'a [u8]) -> Self {
         EthernetFrameSlice { slice: data }
+    }
+
+    pub fn payload(&self, _data_len: usize) -> [u8; 1522] {
+        self.slice[16..1506]
+            .try_into()
+            .expect("Couldnt convert payload into array.")
     }
 }

@@ -8,7 +8,6 @@ edition = "2018"
 
 [dependencies]
 tun-tap = "0.1.2"
-etherparse = "0.9.0"
 
 [build]
 CARGO_TARGET_DIR = "/home/orseti/dev/rust/pct/target"

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::convert::TryInto;
+use tun_tap::Iface;
 
 ///An ARP Packet.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -9,7 +10,7 @@ pub struct ArpPacket {
     hardware_type: u16,
 
     /// proto_type indicates the Protocol Type. In our case this
-    /// will be IPv4, which is 0x0800
+    /// will be MACv4, which is 0x0800
     proto_type: u16,
 
     /// hardware_size indicates the size of the hardware field.
@@ -23,7 +24,7 @@ pub struct ArpPacket {
     /// or RARP reply (4).
     opcode: u16,
 
-    /// data contains the actual payload of the ARP message, in our case, this will contain IPv4
+    /// data contains the actual payload of the ARP message, in our case, this will contain MACv4
     /// specific information.
     ipv4_data: ArpIpv4,
 }
@@ -31,7 +32,7 @@ pub struct ArpPacket {
 impl ArpPacket {
     pub fn from_slice(slice: &ArpPacketSlice) -> Self {
         let ipv4_slice = ArpPacketSlice {
-            slice: &slice.slice[8..],
+            slice: &slice.slice,
         };
         ArpPacket {
             hardware_type: slice.hardware_type(),
@@ -56,13 +57,13 @@ pub struct ArpIpv4 {
     /// Source's MAC Address.
     source_mac: [u8; 6],
 
-    /// Source's IP Address
+    /// Source's MAC Address
     source_ip: u32,
 
     /// Destination's MAC Address
     destination_mac: [u8; 6],
 
-    /// Destination IP Address
+    /// Destination MAC Address
     destination_ip: u32,
 }
 
@@ -96,27 +97,33 @@ impl<'a> ArpPacketSlice<'a> {
     }
 
     fn source_mac(&self) -> [u8; 6] {
-        self.slice[..6]
+        self.slice[8..14]
             .try_into()
             .expect(format!("Error in source MAC {0}:{1}", file!(), line!()).as_str())
     }
 
     fn source_ip(&self) -> u32 {
-        u32::from_be_bytes([self.slice[6], self.slice[7], self.slice[8], self.slice[9]])
+        u32::from_be_bytes([
+            self.slice[14],
+            self.slice[15],
+            self.slice[16],
+            self.slice[17],
+        ])
     }
 
     fn destination_mac(&self) -> [u8; 6] {
-        self.slice[10..16]
+        println!("Source MAC Found: {:X?}", &self.slice[18..24]);
+        self.slice[18..24]
             .try_into()
             .expect(format!("Error in destination MAC {0}:{1}", file!(), line!()).as_str())
     }
 
     fn destination_ip(&self) -> u32 {
         u32::from_be_bytes([
-            self.slice[16],
-            self.slice[17],
-            self.slice[18],
-            self.slice[19],
+            self.slice[24],
+            self.slice[25],
+            self.slice[26],
+            self.slice[27],
         ])
     }
 
@@ -178,48 +185,146 @@ impl<'a> ArpPacketSlice<'a> {
 //
 //
 //
-// TODO for ARP module
-//
-// Store IPv4->MAC translations from broadcasts in our translation table.
-//
-// When receiving a request, check the table. If found, reply; if not found
-// send broadcast, update table with response, and then reply with that translation.
-//
-//
-//
-// TODO for reading packet
-//
-// Enum of hardware types
-// Enum of protocol types
-// check that protocol/hardware size are valid
-// Enum of opcodes
-//
-//
-//
 
-// we
-pub type TranslationTable = HashMap<[u8; 6], u32>;
+pub type TranslationTable = HashMap<u32, [u8; 6]>;
 
-pub fn read_packet(data: &[u8], table: &mut TranslationTable) {
-    let packet = ArpPacket::from_slice(&ArpPacketSlice { slice: &data });
+pub fn read_packet(
+    data: &[u8],
+    table: &mut TranslationTable,
+    tap: &Iface,
+    eth_hdr: &crate::tcp::EthernetFrameSlice,
+) {
+    let packet_slice = &ArpPacketSlice { slice: &data };
+    let packet = ArpPacket::from_slice(packet_slice);
 
-    println!("{:02x?}", packet);
+    match packet.opcode {
+        0x1 => {
+            if packet.ipv4_data.destination_ip == u32::from_be_bytes([0xFF, 0xFF, 0xFF, 0xFF]) {
+                // If we get here, we have a broadcast.
+                println!("Broadcast Received");
+            }
+            // We don't need to do that much here,
+            // as we implement the rest of the
+            // parsing logic after this match.
+            println!("ARP Request Received");
+            // Lookup MAC in hashtable, attempt to get corresponding MAC
+            let res = table.get(&packet.ipv4_data.destination_ip);
+            println!(
+                "Looked up: {:X?}",
+                std::net::Ipv4Addr::from(packet.ipv4_data.destination_ip)
+            );
+            match res {
+                Some(x) => {
+                    // If we have a corresponding MAC already.
+                    // TODO implement reply function, and use the MAC we grab here.
+                    println!(
+                        "Got MAC: {:?} for IP {:?}",
+                        x,
+                        std::net::Ipv4Addr::from(packet.ipv4_data.destination_ip),
+                    );
+                    reply(packet_slice, *x, tap, eth_hdr);
+                }
 
-    let res = table.get(&packet.ipv4_data.destination_mac);
+                None => {
+                    println!(
+                        "No IP Available for MAC: {:X?}",
+                        &packet.ipv4_data.source_mac
+                    );
+                    // We don't have it stored, and as such don't need to
+                    // respond. We can simply wait for a reply, and store that.
+                }
+            }
+        }
 
-    match res {
+        0x2 => {
+            // TODO process reply and insert into table.
+            println!("ARP Reply Received");
+            // Update table with IP and corresponding MAC.
+            update_table(
+                table,
+                packet.ipv4_data.destination_mac,
+                packet.ipv4_data.destination_ip,
+            );
+        }
+
+        _ => {
+            eprintln!("Opcode not supported.");
+        }
+    }
+}
+
+fn reply(
+    packet_buf: &ArpPacketSlice,
+    found_mac: [u8; 6],
+    nic: &Iface,
+    eth_hdr: &crate::tcp::EthernetFrameSlice,
+) {
+    assert_eq!(packet_buf.opcode(), 0x1);
+
+    let mut new_packet = [0u8; 28];
+
+    // Copy in hardware type
+    new_packet[0] = (packet_buf.hardware_type() >> 8) as u8;
+    new_packet[1] = packet_buf.hardware_type() as u8;
+
+    // Copy in protocol type
+    new_packet[2] = (packet_buf.proto_type() >> 8) as u8;
+    new_packet[3] = packet_buf.proto_type() as u8;
+
+    // Copy in hardware and protcol length
+    new_packet[4] = packet_buf.hardware_size();
+    new_packet[5] = packet_buf.proto_size();
+
+    // Copy in opcode
+    new_packet[6] = 0x00;
+    new_packet[7] = 0x02;
+
+    // Store destination mac in buffer as we are
+    // overwriting with old source address.
+    let new_src_mac = [0xbe, 0xe9, 0x7d, 0x63, 0x31, 0xbc];
+    let new_dest_mac: [u8; 6] = packet_buf.source_mac();
+
+    // Change source MAC to our NIC's source mac
+    new_packet[8..14].clone_from_slice(&new_src_mac);
+
+    // Change source IP to request packet's source IP
+    new_packet[14..18].clone_from_slice(&packet_buf.destination_ip().to_be_bytes());
+
+    // Broadcast!
+    new_packet[18..24].clone_from_slice(&new_dest_mac);
+
+    // Change destination IP to request packet's source IP
+    new_packet[24..28].clone_from_slice(&packet_buf.slice[14..18]);
+
+    let mut buf = [0u8; 50];
+
+    buf[4..18].clone_from_slice(&eth_hdr.slice[0..14]);
+    buf[18..46].clone_from_slice(&new_packet);
+
+    let sent_len = nic.send(&buf);
+
+    println!(
+        "Sent ARP reply of size: {0:?} for IP: {1:X?} MAC: {2:X?}",
+        sent_len.unwrap(),
+        &packet_buf.destination_ip(),
+        found_mac
+    );
+}
+
+// Query HashMap, if not found update.
+fn update_table(map: &mut TranslationTable, found_mac: [u8; 6], ip: u32) {
+    match map.get(&ip) {
         Some(x) => {
-            // If we have a corresponding IP already.
-            // TODO implement reply function, and use the IP we grab here.
-            println!("Got IP {:?}", x);
+            // got a corresponding IP.
+            if *x == found_mac {
+                return;
+            } else {
+                map.insert(ip, found_mac);
+            }
         }
 
         None => {
-            println!(
-                "No IP Available for MAC {:X?}",
-                &packet.ipv4_data.destination_mac
-            );
-            // TODO implement broadcast to get IP, then reply.
+            map.insert(ip, found_mac);
         }
     }
 }

@@ -92,3 +92,15 @@ impl<'a> EthernetFrameSlice<'a> {
             .expect("Couldnt convert payload into array.")
     }
 }
+
+pub fn nic_init(table: &mut crate::arp::TranslationTable) {
+    table.insert(
+        u32::from_be_bytes([0x0a, 0x0, 0x0, 0x02]),
+        [0xbe, 0xe9, 0x7d, 0x63, 0x31, 0xbc],
+    );
+
+    table.insert(
+        u32::from_be_bytes([0x7f, 0x0, 0x0, 0x01]),
+        [0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+}

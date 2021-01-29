@@ -112,7 +112,6 @@ impl<'a> ArpPacketSlice<'a> {
     }
 
     fn destination_mac(&self) -> [u8; 6] {
-        println!("Source MAC Found: {:X?}", &self.slice[18..24]);
         self.slice[18..24]
             .try_into()
             .expect(format!("Error in destination MAC {0}:{1}", file!(), line!()).as_str())
@@ -193,30 +192,27 @@ pub fn read_packet(
     table: &mut TranslationTable,
     tap: &Iface,
     eth_hdr: &crate::tcp::EthernetFrameSlice,
+    // not sure if we want to implement this and pass this to reply, etc, we won't
+    // have to hardcode anything anymore, but yeah. Probably should.
+    _tap_ip: &u32,
 ) {
     let packet_slice = &ArpPacketSlice { slice: &data };
     let packet = ArpPacket::from_slice(packet_slice);
 
     match packet.opcode {
         0x1 => {
-            if packet.ipv4_data.destination_ip == u32::from_be_bytes([0xFF, 0xFF, 0xFF, 0xFF]) {
+            if packet.ipv4_data.destination_mac == [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF] {
                 // If we get here, we have a broadcast.
                 println!("Broadcast Received");
             }
             // We don't need to do that much here,
             // as we implement the rest of the
             // parsing logic after this match.
-            println!("ARP Request Received");
             // Lookup MAC in hashtable, attempt to get corresponding MAC
             let res = table.get(&packet.ipv4_data.destination_ip);
-            println!(
-                "Looked up: {:X?}",
-                std::net::Ipv4Addr::from(packet.ipv4_data.destination_ip)
-            );
             match res {
                 Some(x) => {
                     // If we have a corresponding MAC already.
-                    // TODO implement reply function, and use the MAC we grab here.
                     println!(
                         "Got MAC: {:?} for IP {:?}",
                         x,
@@ -227,8 +223,8 @@ pub fn read_packet(
 
                 None => {
                     println!(
-                        "No IP Available for MAC: {:X?}",
-                        &packet.ipv4_data.source_mac
+                        "No MAC Available for IP: {:X?}. Doing Nothing...",
+                        &packet.ipv4_data.destination_ip
                     );
                     // We don't have it stored, and as such don't need to
                     // respond. We can simply wait for a reply, and store that.
@@ -281,6 +277,7 @@ fn reply(
 
     // Store destination mac in buffer as we are
     // overwriting with old source address.
+    // HARDCODED MAC
     let new_src_mac = [0xbe, 0xe9, 0x7d, 0x63, 0x31, 0xbc];
     let new_dest_mac: [u8; 6] = packet_buf.source_mac();
 
@@ -298,7 +295,12 @@ fn reply(
 
     let mut buf = [0u8; 50];
 
-    buf[4..18].clone_from_slice(&eth_hdr.slice[0..14]);
+    // NEEDTO CHANGE DEST MAC IN ETH HEADER TO OLD SOURCE MAC
+    // NEW SOURCE MAC OUR MAC
+    // use old src addr as new dst addr, as well as the protocol id
+    buf[4..10].clone_from_slice(&new_dest_mac);
+    buf[10..16].clone_from_slice(&new_src_mac);
+    buf[16..18].clone_from_slice(&eth_hdr.slice[12..14]);
     buf[18..46].clone_from_slice(&new_packet);
 
     let sent_len = nic.send(&buf);

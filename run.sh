@@ -1,13 +1,13 @@
 #!/bin/bash
 
 CARGO_TARGET_DIR="/home/orseti/dev/rust/pct/target"
-cargo b #--debug
+cargo b --release
 ext=$?
 if [[ $ext -ne 0 ]]; then
 	exit $ext
 fi
-sudo setcap cap_net_admin=eip $CARGO_TARGET_DIR/debug/pct
-RUST_BACKTRACE=full $CARGO_TARGET_DIR/debug/pct &
+sudo setcap cap_net_admin=eip $CARGO_TARGET_DIR/release/pct
+RUST_BACKTRACE=full $CARGO_TARGET_DIR/release/pct &
 pid=$!
 sudo ip addr add 10.0.0.2/24 dev tap0
 sudo ip link set up dev tap0

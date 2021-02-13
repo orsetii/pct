@@ -1,4 +1,5 @@
 use std::convert::TryInto;
+use tun_tap::Iface;
 
 ///Ether type enum present in ethernet II header.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -98,9 +99,111 @@ pub fn nic_init(table: &mut crate::arp::TranslationTable) {
         u32::from_be_bytes([0x0a, 0x0, 0x0, 0x02]),
         [0xbe, 0xe9, 0x7d, 0x63, 0x31, 0xbc],
     );
+    table.insert(
+        u32::from_be_bytes([0x0a, 0x0, 0x0, 0x04]),
+        [0xbe, 0xe9, 0x7d, 0x63, 0x31, 0xbc],
+    );
 
     table.insert(
         u32::from_be_bytes([0x7f, 0x0, 0x0, 0x01]),
         [0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
     );
+}
+
+pub mod icmp {
+
+    pub struct Icmp4Packet {
+        packet_type: u8,
+
+        code: u8,
+
+        checksum: u16,
+    }
+
+    impl Icmp4Packet {
+        pub fn from_slice(slice: &Icmp4PacketSlice) -> Self {
+            Icmp4Packet {
+                packet_type: slice.packet_type(),
+                code: slice.code(),
+                checksum: slice.checksum(),
+            }
+        }
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct Icmp4PacketSlice<'a> {
+        slice: &'a [u8],
+    }
+
+    impl<'a> Icmp4PacketSlice<'a> {
+        fn packet_type(&self) -> u8 {
+            self.slice[0]
+        }
+
+        fn code(&self) -> u8 {
+            self.slice[1]
+        }
+
+        fn checksum(&self) -> u16 {
+            u16::from_be_bytes([self.slice[2], self.slice[3]])
+        }
+    }
+
+    pub fn read_packet(
+        eth_hdr: &crate::tcp::EthernetFrameSlice,
+        ip_hdr: &crate::ipv4::Ipv4PacketSlice,
+        data: &[u8],
+        nic: &tun_tap::Iface,
+    ) {
+        let packet_buf = Icmp4PacketSlice { slice: data };
+
+        let packet = Icmp4Packet::from_slice(&packet_buf);
+
+        println!("Received Packet: {:X?}", packet_buf);
+
+        match packet.packet_type {
+            0x0 => {
+                // If we have a reply, print that.
+                println!(
+                    "Ping Reply from {}",
+                    std::net::Ipv4Addr::from(ip_hdr.destination_ip())
+                );
+            }
+            0x8 => {
+                // If we have a request, reply!
+                let total_buf_size: usize = 18 + ip_hdr.slice.len() + data.len();
+                let mut buf = [0u8; 1600];
+                let new_src_mac = [0xbe, 0xe9, 0x7d, 0x63, 0x31, 0xbc];
+                let new_dest_mac: [u8; 6] = eth_hdr.source();
+
+                buf[4..10].clone_from_slice(&new_dest_mac);
+                println!("{}", line!());
+                buf[10..16].clone_from_slice(&new_src_mac);
+                println!("{}", line!());
+                buf[16..18].clone_from_slice(&eth_hdr.slice[12..14]);
+                println!("{}", line!());
+                buf[18..38].clone_from_slice(ip_hdr.slice);
+                println!("{}", line!());
+
+                let new_src_ip = &ip_hdr.slice[12..16];
+                let new_dest_ip = &ip_hdr.slice[16..20];
+                buf[30..34].clone_from_slice(&new_src_ip);
+                buf[34..38].clone_from_slice(&new_dest_ip);
+
+                buf[ip_hdr.slice.len()..(ip_hdr.slice.len() + data.len())].clone_from_slice(data);
+
+                let sent_len = nic.send(&buf[..total_buf_size]);
+
+                println!(
+                    "Sent ICMP reply of size: {0:?} for IP: {1:X?}",
+                    sent_len.unwrap(),
+                    &new_dest_ip,
+                );
+                println!("Sent: {:X?}", &buf[..total_buf_size]);
+            }
+            _ => {
+                println!("Couldn't Parse ICMP opcode");
+            }
+        }
+    }
 }

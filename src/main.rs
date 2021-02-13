@@ -1,4 +1,5 @@
 use pct::arp;
+use pct::ipv4;
 use pct::tcp;
 use std::io;
 
@@ -25,6 +26,30 @@ fn main() -> io::Result<()> {
             Some(x) => {
                 if x == &tcp::EtherType::Arp {
                     arp::read_packet(&payload, &mut table, &nic, &frame, &nic_ip);
+                } else if x == &tcp::EtherType::Ipv4 {
+                    match ipv4::read_packet(&payload) {
+                        Some(x) => {
+                            // TODO if UDP, print error and move on.
+                            if x == ipv4::ProtoType::ICMP {
+                                println!("Reading ICMP Packet: {:X?}", payload);
+                                &tcp::icmp::read_packet(
+                                    &frame,
+                                    &ipv4::Ipv4PacketSlice {
+                                        slice: &payload[..20],
+                                    },
+                                    &payload[20.._data_len],
+                                    &nic,
+                                );
+                            } else if x == ipv4::ProtoType::UDP {
+                                println!("Found UDP Protocol. Moving on.");
+                            } else if x == ipv4::ProtoType::TCP {
+                                println!("Found TCP Protocol. TODO");
+                            }
+                        }
+                        None => {
+                            println!("Bad IPv4 Protcol. Moving on.");
+                        }
+                    }
                 }
             }
 

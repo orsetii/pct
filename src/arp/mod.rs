@@ -330,37 +330,3 @@ fn update_table(map: &mut TranslationTable, found_mac: [u8; 6], ip: u32) {
         }
     }
 }
-
-pub fn calculate_checksum(header: &[u8]) -> u16 {
-    let mut sum: u32 = 0;
-    let len = header.len();
-    let mut i = len;
-
-    while i > 1 {
-        sum += u16::from_be_bytes([header[i - 2], header[i - 1]]) as u32;
-        println!("{} Sum now {:x}", i, sum);
-        i -= 2;
-    }
-
-    sum = (sum & 0xffff) + (sum >> 16);
-    println!("Sum post squash: {:x}. To return: {:x}", sum, !sum as u16);
-    !sum as u16
-}
-
-#[cfg(test)]
-#[test]
-fn test_checksum() {
-    let ret = calculate_checksum(&[
-        0x45, 0x00, 0x00, 0x54, 0x41, 0xe0, 0x40, 0x00, 0x40, 0x01, 0x00, 0x00, 0x0a, 0x00, 0x00,
-        0x04, 0x0a, 0x00, 0x00, 0x05,
-    ]);
-
-    let next = &[
-        0x45, 0x00, 0x00, 0x54, 0x41, 0xe0, 0x40, 0x00, 0x40, 0x01, 0xe4, 0xc0, 0x0a, 0x00, 0x00,
-        0x04, 0x0a, 0x00, 0x00, 0x05,
-    ];
-
-    let ret2 = calculate_checksum(next);
-
-    println!("{:x}", ret2);
-}

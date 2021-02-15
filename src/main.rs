@@ -1,6 +1,6 @@
 use pct::arp;
+use pct::eth;
 use pct::ipv4;
-use pct::tcp;
 use std::io;
 
 fn main() -> io::Result<()> {
@@ -14,25 +14,24 @@ fn main() -> io::Result<()> {
 
     for _ in 1..10000 {
         let _data_len = nic.recv(&mut buf)?;
-        let frame = tcp::EthernetFrameSlice::read_from_slice(&buf[4..]);
-        let header = tcp::EthernetHeader::from_header_slice(&frame);
-        let proto = tcp::EtherType::from_u16(header.ethertype);
+        let frame = eth::EthernetFrameSlice::read_from_slice(&buf[4..]);
+        let header = eth::EthernetHeader::from_header_slice(&frame);
+        let proto = eth::EtherType::from_u16(header.ethertype);
         let payload = &frame.slice[14..];
         let mut table: pct::arp::TranslationTable = std::collections::HashMap::new();
 
-        tcp::nic_init(&mut table);
+        eth::nic_init(&mut table);
 
         match &proto {
             Some(x) => {
-                if x == &tcp::EtherType::Arp {
+                if x == &eth::EtherType::Arp {
                     arp::read_packet(&payload, &mut table, &nic, &frame, &nic_ip);
-                } else if x == &tcp::EtherType::Ipv4 {
+                } else if x == &eth::EtherType::Ipv4 {
                     match ipv4::read_packet(&payload) {
                         Some(x) => {
                             // TODO if UDP, print error and move on.
                             if x == ipv4::ProtoType::ICMP {
-                                println!("Reading ICMP Packet: {:X?}", payload);
-                                &tcp::icmp::read_packet(
+                                &pct::icmp::read_packet(
                                     &frame,
                                     &ipv4::Ipv4PacketSlice {
                                         slice: &payload[..20],

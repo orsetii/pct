@@ -2,6 +2,29 @@ use std::collections::HashMap;
 use std::convert::TryInto;
 use tun_tap::Iface;
 
+/// what protocol?
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProtoType {
+    ICMP = 0x01,
+    TCP = 0x06,
+    UDP = 0x17,
+}
+
+impl ProtoType {
+    pub fn from_u8(value: u8) -> Option<ProtoType> {
+        use self::ProtoType::*;
+        match value {
+            0x01 => Some(ICMP),
+            0x06 => Some(TCP),
+            0x11 => Some(UDP),
+            _ => {
+                println!("Couldn't find protcol for 0x{:02x}", value);
+                None
+            }
+        }
+    }
+}
+
 ///An Ipv4 Packet.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IPv4Packet {
@@ -46,13 +69,14 @@ pub struct IPv4Packet {
     ttl: u8,
 
     /// protocol defines the protocol used in the data portion of the IP datagram.
-    protocol: u16,
+    protocol: Option<ProtoType>,
 
     /// header_checksum defines the error checking mechanism of IPv4 Packets.
     /// It is a 16 bit field.
     ///
     /// When a packet arrives at a router, the router decreases the TTL field, so the router
     /// must calculate a new checksum.
+    // TODO not sure when to calculate, ig check per proto?
     header_checksum: u16,
 
     source_ip: u32,
@@ -64,67 +88,87 @@ pub struct IPv4Packet {
 }
 
 impl IPv4Packet {
-    pub fn from_slice() {}
+    // TODO parse packet!!
+    pub fn from_slice(slice: Ipv4PacketSlice) -> Self {
+        IPv4Packet {
+            version: slice.version(),
+            ihl: slice.ihl(),
+            dscp: slice.dscp(),
+            ecn: slice.ecn(),
+            total_len: slice.total_len(),
+            identification: slice.identification(),
+            flags: slice.flags(),
+            fragment_offset: slice.fragment_offset(),
+            ttl: slice.ttl(),
+            protocol: slice.protocol(),
+            header_checksum: slice.header_checksum(),
+            source_ip: slice.source_ip(),
+            dest_ip: slice.destination_ip(),
+            // keeping this is a blank field, dont plan on using
+            // atm, but for future.
+            _options: [0u8; 12],
+        }
+    }
 }
 
-///A slice containing an ARP Packet.
+/// A slice containing an ARP Packet.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Ipv4PacketSlice<'a> {
-    slice: &'a [u8],
+    pub slice: &'a [u8],
 }
 
 impl<'a> Ipv4PacketSlice<'a> {
     /// Grabs the first half of the first byte of the IPv4 Header.
-    fn version(&self) -> u8 {
+    pub fn version(&self) -> u8 {
         return 0xF0 & self.slice[0];
     }
 
     /// Grabs the second half of the first byte of the IPv4 Header.
-    fn ihl(&self) -> u8 {
+    pub fn ihl(&self) -> u8 {
         0x0F & self.slice[0]
     }
 
     /// Grabs the first six bits of the second byte of the IPv4 Header.
-    fn dscp(&self) -> u8 {
+    pub fn dscp(&self) -> u8 {
         0x2F & self.slice[1]
     }
 
     /// Grabs the last two bits of the second byte of the IPv4 Header.
-    fn ecn(&self) -> u8 {
+    pub fn ecn(&self) -> u8 {
         0x0C & self.slice[1]
     }
 
-    fn total_len(&self) -> u16 {
+    pub fn total_len(&self) -> u16 {
         u16::from_be_bytes([self.slice[2], self.slice[3]])
     }
 
-    fn identification(&self) -> u16 {
+    pub fn identification(&self) -> u16 {
         u16::from_be_bytes([self.slice[4], self.slice[5]])
     }
 
     /// Grabs the first three bits of the second byte of the IPv4 Header.
-    fn flags(&self) -> u8 {
+    pub fn flags(&self) -> u8 {
         0x70 & self.slice[6]
     }
 
     /// Grabs the last 12 bits of the second byte of the IPv4 Header.
-    fn fragment_offset(&self) -> u16 {
+    pub fn fragment_offset(&self) -> u16 {
         u16::from_be_bytes([(0x8F & self.slice[6]), self.slice[7]])
     }
 
-    fn ttl(&self) -> u8 {
+    pub fn ttl(&self) -> u8 {
         self.slice[8]
     }
 
-    fn protocol(&self) -> u8 {
-        self.slice[9]
+    pub fn protocol(&self) -> Option<ProtoType> {
+        ProtoType::from_u8(self.slice[9])
     }
 
-    fn header_checksum(&self) -> u16 {
+    pub fn header_checksum(&self) -> u16 {
         u16::from_be_bytes([self.slice[10], self.slice[11]])
     }
 
-    fn source_ip(&self) -> u32 {
+    pub fn source_ip(&self) -> u32 {
         u32::from_be_bytes([
             self.slice[12],
             self.slice[13],
@@ -132,7 +176,7 @@ impl<'a> Ipv4PacketSlice<'a> {
             self.slice[15],
         ])
     }
-    fn destination_ip(&self) -> u32 {
+    pub fn destination_ip(&self) -> u32 {
         u32::from_be_bytes([
             self.slice[16],
             self.slice[17],
@@ -141,25 +185,55 @@ impl<'a> Ipv4PacketSlice<'a> {
         ])
     }
 
-    fn read_from_slice(data: &'a [u8; 28]) -> Self {
+    pub fn read_from_slice(data: &'a [u8; 28]) -> Self {
         Ipv4PacketSlice { slice: data }
     }
 }
 
 pub fn calculate_checksum(header: &[u8]) -> u16 {
+    println!("Getting checksum of {:X?}", header);
     let mut sum: u32 = 0;
-    let len = header.len();
-    let mut i = len;
+    let mut i = header.len();
 
     while i > 1 {
         sum += u16::from_be_bytes([header[i - 2], header[i - 1]]) as u32;
-        println!("{} Sum now {:x}", i, sum);
+        println!(
+            "Adding {:X?} to {:X}",
+            u16::from_be_bytes([header[i - 2], header[i - 1]]) as u32,
+            sum
+        );
         i -= 2;
     }
 
+    if i == 1 {
+        println!("Adding leftover byte..");
+        sum += header[i - 1] as u32;
+    }
+
     sum = (sum & 0xffff) + (sum >> 16);
-    println!("Sum post squash: {:x}. To return: {:x}", sum, !sum as u16);
     !sum as u16
+}
+
+pub fn checksum(slice: &[u8]) -> u16 {
+    let (head, slice, tail) = unsafe { slice.align_to::<u16>() };
+    if !head.is_empty() {
+        panic!("checksum() input should be 16-bit aligned");
+    }
+    if !tail.is_empty() {
+        panic!("checksum() input size should be a multiple of 2 bytes");
+    }
+
+    fn add(a: u16, b: u16) -> u16 {
+        let s: u32 = (a as u32) + (b as u32);
+        if s & 0x1_00_00 > 0 {
+            // overflow, add carry bit
+            (s + 1) as u16
+        } else {
+            s as u16
+        }
+    }
+
+    !slice.iter().fold(0, |x, y| add(x, *y))
 }
 
 #[cfg(test)]
@@ -178,4 +252,16 @@ fn test_checksum() {
     ];
 
     assert_eq!(calculate_checksum(next), 0);
+}
+
+/// returns the protocol it detects.
+pub fn read_packet(data: &[u8]) -> Option<ProtoType> {
+    // NOTE: assuming that 'data' contains ipv4 data and 'above'
+    println!("Packet: {:X?}", &data[..28]);
+    let slice =
+        Ipv4PacketSlice::read_from_slice(data[..28].try_into().expect("Couldnt convert ipv4 data"));
+
+    let ip_data = IPv4Packet::from_slice(slice);
+
+    ip_data.protocol
 }

@@ -191,7 +191,7 @@ pub fn read_packet(
     data: &[u8],
     table: &mut TranslationTable,
     tap: &Iface,
-    eth_hdr: &crate::tcp::EthernetFrameSlice,
+    eth_hdr: &crate::eth::EthernetFrameSlice,
     // not sure if we want to implement this and pass this to reply, etc, we won't
     // have to hardcode anything anymore, but yeah. Probably should.
     _tap_ip: &u32,
@@ -253,7 +253,7 @@ fn reply(
     packet_buf: &ArpPacketSlice,
     found_mac: [u8; 6],
     nic: &Iface,
-    eth_hdr: &crate::tcp::EthernetFrameSlice,
+    eth_hdr: &crate::eth::EthernetFrameSlice,
 ) {
     assert_eq!(packet_buf.opcode(), 0x1);
 

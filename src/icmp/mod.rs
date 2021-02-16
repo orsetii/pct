@@ -114,8 +114,7 @@ pub fn read_packet(
     etherframe: &eth::EthernetFrameSlice,
     ipframe: &crate::ipv4::Ipv4PacketSlice,
     icmpframe: &[u8],
-    nic: &tun_tap::Iface,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Option<[u8; 1500]> {
     let packet_slice = &IcmpPacketSlice { slice: &icmpframe };
     let icmp_data = IcmpPacket::from_slice(packet_slice);
 
@@ -125,11 +124,12 @@ pub fn read_packet(
                 "Ping Reply from {}",
                 std::net::Ipv4Addr::from(ipframe.destination_ip())
             );
+            None
         }
         IcmpType::Echo => {
             // If we have a request, reply!
             let total_buf_size: usize = 18 + ipframe.slice.len() + icmpframe.len();
-            let mut buf = [0u8; 1600];
+            let mut buf = [0u8; 1500];
             let new_dest_mac: [u8; 6] = etherframe.source();
 
             buf[4..10].clone_from_slice(&new_dest_mac);
@@ -146,11 +146,9 @@ pub fn read_packet(
             // NOTE: Don't need to recalculate anything since we don't change any IPv4 Data..
             buf[38..38 + icmpframe.len()].clone_from_slice(icmpframe);
 
-            // This fucking works?? So WHY does, when I change values it can't compute the correct
-            // checksum... AHH
             if crate::ipv4::checksum(&buf[38..(38 + 16 + 48)]) != 0 {
                 println!("----------------------------\nCHECKSUM INVALID!!!\n----------------------------\n");
-                return Ok(());
+                return None;
             }
             buf[38] = 0;
             buf[40] = 0;
@@ -159,18 +157,8 @@ pub fn read_packet(
             buf[40] = icmp_csum as u8;
             buf[41] = (icmp_csum >> 8) as u8;
 
-            let sent_len = nic.send(&buf[..total_buf_size]);
-
-            println!(
-                "Sent ICMP reply of size: {0:?} for IP: {1:X?}",
-                sent_len.unwrap(),
-                &new_dest_ip,
-            );
+            Some(buf)
         }
-
-        _ => {
-            println!("Unsure how to process type: {:?}", icmp_data.msg_type);
-        }
+        _ => None,
     }
-    Ok(())
 }

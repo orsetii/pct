@@ -1,63 +1,29 @@
-use pct::arp;
-use pct::eth;
-use pct::ipv4;
+use pct::pkt;
 use std::io;
 
 fn main() -> io::Result<()> {
     let nic = tun_tap::Iface::new("tap0", tun_tap::Mode::Tap)?;
 
-    let nic_ip = 0x0a000002_u32;
+    let _nic_ip = 0x0a000002_u32;
 
     // At the moment the IP has to be hardcoded, to implement automatically at some point.
 
+    let mut table = pct::arp::TranslationTable::new();
+    pct::eth::nic_init(&mut table);
     let mut buf = [0u8; 1522];
 
-    for _ in 1..10000 {
+    loop {
         let _data_len = nic.recv(&mut buf)?;
-        let frame = eth::EthernetFrameSlice::read_from_slice(&buf[4..]);
-        let header = eth::EthernetHeader::from_header_slice(&frame);
-        let proto = eth::EtherType::from_u16(header.ethertype);
-        let payload = &frame.slice[14..];
-        let mut table: pct::arp::TranslationTable = std::collections::HashMap::new();
-
-        eth::nic_init(&mut table);
-
-        match &proto {
-            Some(x) => {
-                if x == &eth::EtherType::Arp {
-                    arp::read_packet(&payload, &mut table, &nic, &frame, &nic_ip);
-                } else if x == &eth::EtherType::Ipv4 {
-                    match ipv4::read_packet(&payload) {
-                        Some(x) => {
-                            // TODO if UDP, print error and move on.
-                            if x == ipv4::ProtoType::ICMP {
-                                &pct::icmp::read_packet(
-                                    &frame,
-                                    &ipv4::Ipv4PacketSlice {
-                                        slice: &payload[..20],
-                                    },
-                                    &payload[20.._data_len],
-                                    &nic,
-                                );
-                            } else if x == ipv4::ProtoType::UDP {
-                                println!("Found UDP Protocol. Moving on.");
-                            } else if x == ipv4::ProtoType::TCP {
-                                println!("Found TCP Protocol. TODO");
-                            }
-                        }
-                        None => {
-                            println!("Bad IPv4 Protcol. Moving on.");
-                        }
-                    }
+        let pkt = pkt::read_and_reply(&mut buf, _data_len, &mut table);
+        if pkt.0 {
+            match nic.send(&buf[..pkt.1]) {
+                Ok(x) => {
+                    println!("Sent data of len {}", x);
                 }
-            }
-
-            None => {
-                println!("Bad Protocol. Received Packets: 0x{:X?}", header.ethertype);
-                println!("Packet: {:X?}", header);
+                Err(e) => {
+                    println!("Error: {:?} in sending data {:X?}", e, buf);
+                }
             }
         }
     }
-
-    Ok(())
 }

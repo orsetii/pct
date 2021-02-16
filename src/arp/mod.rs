@@ -184,18 +184,15 @@ impl<'a> ArpPacketSlice<'a> {
 //
 //
 //
-
 pub type TranslationTable = HashMap<u32, [u8; 6]>;
 
 pub fn read_packet(
     data: &[u8],
-    table: &mut TranslationTable,
-    tap: &Iface,
     eth_hdr: &crate::eth::EthernetFrameSlice,
+    table: &mut TranslationTable,
     // not sure if we want to implement this and pass this to reply, etc, we won't
     // have to hardcode anything anymore, but yeah. Probably should.
-    _tap_ip: &u32,
-) {
+) -> Option<[u8; 46]> {
     let packet_slice = &ArpPacketSlice { slice: &data };
     let packet = ArpPacket::from_slice(packet_slice);
 
@@ -213,12 +210,8 @@ pub fn read_packet(
             match res {
                 Some(x) => {
                     // If we have a corresponding MAC already.
-                    println!(
-                        "Got MAC: {:?} for IP {:?}",
-                        x,
-                        std::net::Ipv4Addr::from(packet.ipv4_data.destination_ip),
-                    );
-                    reply(packet_slice, *x, tap, eth_hdr);
+                    let reply_pkt = reply(packet_slice, *x, eth_hdr);
+                    Some(reply_pkt)
                 }
 
                 None => {
@@ -228,12 +221,12 @@ pub fn read_packet(
                     );
                     // We don't have it stored, and as such don't need to
                     // respond. We can simply wait for a reply, and store that.
+                    None
                 }
             }
         }
 
         0x2 => {
-            // TODO process reply and insert into table.
             println!("ARP Reply Received");
             // Update table with IP and corresponding MAC.
             update_table(
@@ -241,10 +234,12 @@ pub fn read_packet(
                 packet.ipv4_data.destination_mac,
                 packet.ipv4_data.destination_ip,
             );
+            None
         }
 
         _ => {
             eprintln!("Opcode not supported.");
+            None
         }
     }
 }
@@ -252,9 +247,8 @@ pub fn read_packet(
 fn reply(
     packet_buf: &ArpPacketSlice,
     found_mac: [u8; 6],
-    nic: &Iface,
     eth_hdr: &crate::eth::EthernetFrameSlice,
-) {
+) -> [u8; 46] {
     assert_eq!(packet_buf.opcode(), 0x1);
 
     let mut new_packet = [0u8; 28];
@@ -293,7 +287,8 @@ fn reply(
     // Change destination IP to request packet's source IP
     new_packet[24..28].clone_from_slice(&packet_buf.slice[14..18]);
 
-    let mut buf = [0u8; 50];
+    // NOTE: was 50
+    let mut buf = [0u8; 46];
 
     // NEEDTO CHANGE DEST MAC IN ETH HEADER TO OLD SOURCE MAC
     // NEW SOURCE MAC OUR MAC
@@ -303,14 +298,7 @@ fn reply(
     buf[16..18].clone_from_slice(&eth_hdr.slice[12..14]);
     buf[18..46].clone_from_slice(&new_packet);
 
-    let sent_len = nic.send(&buf);
-
-    println!(
-        "Sent ARP reply of size: {0:?} for IP: {1:X?} MAC: {2:X?}",
-        sent_len.unwrap(),
-        &packet_buf.destination_ip(),
-        found_mac
-    );
+    buf
 }
 
 // Query HashMap, if not found update.

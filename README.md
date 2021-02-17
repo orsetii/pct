@@ -1,8 +1,6 @@
 # pct
 
-This is an implementation of TCP in Rust, that I am doing to learn the language! (read the code and you will be able to tell!)
+This is an implementation of userspace TCP, that I did to learn both rust and how various protocols work at the packet/byte level.
 
-It makes use of tun/tap devices to implement userspace tcp, which can enable us to do some fun things.
-
-Implementation of Ethernet, IP, ARP, TCP and ICMP, and operates from a `tap0` device.
+Implementation of Ethernet, IP, ARP, TCP and ICMP, and operates from [tun/tap devices](https://en.wikipedia.org/wiki/TUN/TAP).
 

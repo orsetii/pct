@@ -37,6 +37,38 @@ impl TcpHeaderFlags {
             fin: false,
         }
     }
+
+    pub fn to_u8(&self) -> [u8; 2] {
+        let mut ret = [0u8; 2];
+        if self.ns {
+            ret[0] |= 0x01;
+        }
+        if self.cwr {
+            ret[1] |= 0x80;
+        }
+        if self.ece {
+            ret[1] |= 0x40;
+        }
+        if self.urg {
+            ret[1] |= 0x20;
+        }
+        if self.ack {
+            ret[1] |= 0x10;
+        }
+        if self.psh {
+            ret[1] |= 0x08;
+        }
+        if self.rst {
+            ret[1] |= 0x04;
+        }
+        if self.syn {
+            ret[1] |= 0x02;
+        }
+        if self.fin {
+            ret[1] |= 0x01;
+        }
+        ret
+    }
 }
 
 ///An TCP Header.
@@ -109,6 +141,33 @@ impl TcpHeader {
             options: slice.options(),
         }
     }
+    pub fn to_slice(&self) -> [u8; 60] {
+        let mut ret = [0u8; 60];
+        ret[0..2].clone_from_slice(&u16::to_be_bytes(self.src_port));
+        ret[2..4].clone_from_slice(&u16::to_be_bytes(self.dst_port));
+        ret[4..8].clone_from_slice(&u32::to_be_bytes(self.seq_number));
+        ret[8..12].clone_from_slice(&u32::to_be_bytes(self.ack_number));
+        let flags_u8 = self.flags.to_u8();
+        println!(
+            "data offset pre: {} post: {}",
+            self.data_offset,
+            self.data_offset << 4
+        );
+        ret[12] = (0b10100000) | flags_u8[0];
+        ret[13] = flags_u8[1];
+        ret[14..16].clone_from_slice(&u16::to_be_bytes(self.window_size));
+        // dumb implementatio, assume caller handles recalcuation, awkard here.
+        ret[16..18].clone_from_slice(&u16::to_be_bytes(self.checksum));
+        ret[18..20].clone_from_slice(&u16::to_be_bytes(self.urgent_pointer));
+        ret[20..60].clone_from_slice(&self.options);
+        ret
+    }
+    fn flip_sd(&mut self) {
+        let new_dst = self.src_port;
+        let new_src = self.dst_port;
+        self.dst_port = new_dst;
+        self.src_port = new_src;
+    }
 }
 
 /// A slice containing an TCP Packet.
@@ -150,7 +209,7 @@ impl<'a> TcpPacketSlice<'a> {
     pub fn flags(&self) -> TcpHeaderFlags {
         let mut flags = TcpHeaderFlags::new();
 
-        if self.slice[12] & 0x02 != 0 {
+        if self.slice[12] & 0x01 != 0 {
             flags.ns = true;
         }
 
@@ -206,7 +265,7 @@ impl<'a> TcpPacketSlice<'a> {
             &self.slice[20..data_max + 20].len(),
             ret[..data_max].len(),
         );
-        ret[..data_max].clone_from_slice(&self.slice[20..data_max + 20]); // current panic cause
+        ret[..data_max].clone_from_slice(&self.slice[20..data_max + 20]);
         println!("Options extracted: {:X?}", ret);
         ret
     }
@@ -227,14 +286,54 @@ fn tcp_checksum(tcp_packet: &TcpPacketSlice, ipv4_packet: &crate::ipv4::IPv4Pack
     crate::ipv4::checksum(&[&psuedo_header, data].concat())
 }
 
-// TODO: return a option u8 ref as per arp and icmp
-pub fn read_packet(data: &[u8], ipv4_packet: &crate::ipv4::IPv4Packet) {
+/// returns a TCP Packet depending on what was contained in recv'd TCP packet.
+/// We use a 1500 size max array size as this is the MTU for ethernet.
+pub fn read_packet(
+    data: &[u8],
+    ipv4_packet: &crate::ipv4::IPv4Packet,
+) -> Option<([u8; 1500], usize)> {
     // assuming that data means TCP and above layer.
     let tcp_slice = TcpPacketSlice { slice: data };
 
-    let tcp_packet = TcpHeader::from_slice(&tcp_slice);
+    let mut tcp_packet = TcpHeader::from_slice(&tcp_slice);
 
     // check the checksum
-    let original_csum_res = tcp_checksum(&tcp_slice, ipv4_packet);
+    //let original_csum_res = tcp_checksum(&tcp_slice, ipv4_packet);
     println!("Recvd TCP Packet: {:?}", tcp_packet);
+    let mut buf = [0u8; 1500];
+
+    if tcp_packet.flags.syn {
+        tcp_packet.flags.ack = true;
+        tcp_packet.flip_sd();
+        tcp_packet.data_offset = 40;
+
+        let old_ack = tcp_packet.ack_number;
+        let old_seq = tcp_packet.seq_number;
+        tcp_packet.ack_number = tcp_packet.seq_number + 1;
+        println!("FOUND ACK: {} : FOUND SEQ: {}", old_ack, old_seq);
+        if old_ack == 0 {
+            // if ack is zero, set an ISN.
+            tcp_packet.seq_number = 300;
+        } else {
+            tcp_packet.seq_number = old_ack + 1;
+        }
+        tcp_packet.checksum = 0;
+        let tcp_outbuf = tcp_packet.to_slice();
+        let csum = tcp_checksum(
+            &TcpPacketSlice {
+                slice: &tcp_outbuf[..(tcp_packet.data_offset as usize)],
+            },
+            ipv4_packet,
+        );
+        println!("CHECKSUM: {:X?}", csum);
+        tcp_packet.checksum = csum;
+        let tcp_outbuf = tcp_packet.to_slice();
+        println!(
+            "TCP PACKET STRUCT: {:?}\nTCP BUF: {:X?}",
+            tcp_packet, tcp_outbuf
+        );
+        buf[..tcp_packet.data_offset as usize]
+            .clone_from_slice(&tcp_outbuf[..tcp_packet.data_offset as usize]);
+    }
+    Some((buf, tcp_packet.data_offset as usize))
 }

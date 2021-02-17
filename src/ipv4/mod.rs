@@ -201,7 +201,7 @@ impl<'a> Ipv4PacketSlice<'a> {
         ])
     }
 
-    pub fn read_from_slice(data: &'a [u8; 28]) -> Self {
+    pub fn read_from_slice(data: &'a [u8; 20]) -> Self {
         Ipv4PacketSlice { slice: data }
     }
 }
@@ -266,8 +266,9 @@ fn test_checksum() {
 pub fn read_packet(data: &[u8]) -> Option<ProtoType> {
     // NOTE: assuming that 'data' contains ipv4 data and 'above'
     let slice =
-        Ipv4PacketSlice::read_from_slice(data[..28].try_into().expect("Couldnt convert ipv4 data"));
+        Ipv4PacketSlice::read_from_slice(data.try_into().expect("Couldnt convert ipv4 data"));
 
+    println!("IP SLICE: {:X?}", data);
     let ip_data = IPv4Packet::from_slice(slice);
 
     ip_data.protocol

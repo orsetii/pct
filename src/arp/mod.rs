@@ -192,7 +192,7 @@ pub fn read_packet(
     table: &mut TranslationTable,
     // not sure if we want to implement this and pass this to reply, etc, we won't
     // have to hardcode anything anymore, but yeah. Probably should.
-) -> Option<[u8; 46]> {
+) -> Option<[u8; 28]> {
     let packet_slice = &ArpPacketSlice { slice: &data };
     let packet = ArpPacket::from_slice(packet_slice);
 
@@ -244,11 +244,12 @@ pub fn read_packet(
     }
 }
 
+/// Reply returns the ARP reply ONLY.
 fn reply(
     packet_buf: &ArpPacketSlice,
     found_mac: [u8; 6],
     eth_hdr: &crate::eth::EthernetFrameSlice,
-) -> [u8; 46] {
+) -> [u8; 28] {
     assert_eq!(packet_buf.opcode(), 0x1);
 
     let mut new_packet = [0u8; 28];
@@ -269,36 +270,19 @@ fn reply(
     new_packet[6] = 0x00;
     new_packet[7] = 0x02;
 
-    // Store destination mac in buffer as we are
-    // overwriting with old source address.
-    // HARDCODED MAC
-    let new_src_mac = [0xbe, 0xe9, 0x7d, 0x63, 0x31, 0xbc];
-    let new_dest_mac: [u8; 6] = packet_buf.source_mac();
+    let new_dest_mac: [u8; 6] = eth_hdr.source();
 
     // Change source MAC to our NIC's source mac
-    new_packet[8..14].clone_from_slice(&new_src_mac);
+    new_packet[8..14].clone_from_slice(&found_mac);
 
-    // Change source IP to request packet's source IP
     new_packet[14..18].clone_from_slice(&packet_buf.destination_ip().to_be_bytes());
 
-    // Broadcast!
     new_packet[18..24].clone_from_slice(&new_dest_mac);
 
     // Change destination IP to request packet's source IP
     new_packet[24..28].clone_from_slice(&packet_buf.slice[14..18]);
 
-    // NOTE: was 50
-    let mut buf = [0u8; 46];
-
-    // NEEDTO CHANGE DEST MAC IN ETH HEADER TO OLD SOURCE MAC
-    // NEW SOURCE MAC OUR MAC
-    // use old src addr as new dst addr, as well as the protocol id
-    buf[4..10].clone_from_slice(&new_dest_mac);
-    buf[10..16].clone_from_slice(&new_src_mac);
-    buf[16..18].clone_from_slice(&eth_hdr.slice[12..14]);
-    buf[18..46].clone_from_slice(&new_packet);
-
-    buf
+    new_packet
 }
 
 // Query HashMap, if not found update.
